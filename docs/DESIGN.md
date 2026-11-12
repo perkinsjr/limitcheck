@@ -2,86 +2,98 @@
 
 ## Problem
 
-Teams rarely test rate limits until something breaks. limitcheck is a Go CLI that states an intended limit, sends a planned traffic pattern, and reports pass, warn, or fail for each check.
+Teams rarely test rate limits until something breaks. limitcheck is a Go CLI that states an intended limit, sends the traffic that would expose a specific limiter bug, and reports pass, warn, fail, or inconclusive for each check.
 
 ## Usage
 
 ```
 limitcheck https://api.example.com/v1/items \
   --limit 100/60s \
-  --header "Authorization: Bearer $KEY"
+  --header "Authorization: Bearer $KEY" \
+  --yes
 ```
+
+Default checks run in registry order: headers, accuracy, boundary, burst, recovery. Isolation joins when two identities or `--key-by` are present. Multi-instance joins when two `--origin` values and `--sharing` are set.
 
 ```
 limitcheck --config limitcheck.yaml --json
+limitcheck --dry-run --limit 100/60s https://api.example.com/v1/items
+limitcheck serve --addr 127.0.0.1:0 --limit 10/2s --algo fixed
 ```
 
-```
-limitcheck demo --scenario fixed-window   # built-in broken server + self-check
-```
+Exit codes: any fail → 1; no fail but inconclusive → 2; pass/warn and dry-run → 0; did not start → 2.
 
 ## Shape
 
-Base is a sealed Campaign plan, then execute, then analyze.
+Base is a check registry with pure verdicts. Each check owns its stimulus and its scoring.
 
-1. Parse CLI or YAML into `CampaignSpec` at the boundary.
-2. `Plan(spec)` builds a `Plan` of request slots with absolute fire times.
-3. `Safety.Check(plan)` enforces localhost or `--yes`, and `--max-requests`.
-4. `--dry-run` prints the plan and exits 0.
-5. `Scheduler` fires slots while tracking clock drift.
-6. Each response becomes a `RequestEvent` in an `ObservationLog` / `Timeline`.
-7. Registered checks analyze the log and return `Verdict` values.
-8. `Reporter` prints terminal or JSON and sets the process exit code.
+1. Parse CLI or YAML into `spec.Input` at the boundary.
+2. Select checks from registry `All` (or named `--check` values).
+3. For each check, `Stimulus` returns immutable waves (counts, in-flight, interval, identities, fanout, `Gate`).
+4. Preflight `sched.Cost` against `--max-requests`. Refuse non-loopback hosts without `--yes`.
+5. `--dry-run` prints the wave table and exits 0 without dialing.
+6. `sched` expands each wave to absolute `GridAt` slots. One timer per wait. No rebase after drift. Missed `MustHit` gates hold the wave.
+7. `exec` sends at most once per slot and appends `RequestEvent` values (`GridAt`, `SentAt`, status, reading). Drift is `SentAt - GridAt`, derived not stored.
+8. `hdr.Interpret` is the only reader of status and rate-limit headers. `hdr.Write` is the only writer, including the broken server.
+9. `Verdict(policy, timeline)` is pure. No context, clock, or client.
+10. `render` prints text or JSON. `Report.ExitCode` is the only status-to-process map.
 
 ### Core types
 
-- `Limit` — count + window duration (parsed from `100/60s`)
-- `Identity` — header set that defines one client
-- `Target` — URL, method, body, base headers
-- `CampaignSpec` — targets, limit, identities, check kinds, origins, safety flags
-- `Slot` — fire-at time, target index, identity index, tag (steady|pre_boundary|post_boundary|burst|probe)
-- `Plan` — ordered slots, expected totals, window anchors
-- `RequestEvent` — slot id, start/end, status, headers, body snippet, error
-- `ObservationLog` — events + timeline buckets
-- `Check` — `Name() CheckKind`; `Analyze(log, spec) Verdict`
-- `Verdict` — status (pass|warn|fail), message, metrics map
+- `Rate` / `Policy` — count + window from `N/<duration>`
+- `Identity`, `Template`, `Origin`, `Input`, `Caps`
+- `Gate` — closed algebra: Immediate, AfterPrevious, AfterLast, WhenIdle, SnapshotReset, RetryAfter, Ready
+- `Wave`, `Stimulus`, `Phase`
+- `Reading`, `RequestEvent`, `Marker`, `Timeline`
+- `Check` — Name, IncludeByDefault, Stimulus, Verdict
+- `Verdict`, `Report`, `Status` (pass|warn|fail|inconclusive)
 
 ### Packages
 
-- `cmd/limitcheck` — thin CLI
-- `internal/spec` — parse limit strings, flags, YAML
-- `internal/plan` — build Plan from CampaignSpec
-- `internal/safety` — pure gates
-- `internal/schedule` — drift-aware executor
-- `internal/observe` — RequestEvent, ObservationLog
-- `internal/check` — registry + analyzers
-- `internal/report` — text, JSON, ASCII timeline
-- `internal/testserver` — broken limiters for demos and tests
+- `cmd/limitcheck` — thin CLI (`run`, `serve`)
+- `internal/spec` — parse rate, caps, Input
+- `internal/config` — flags + YAML → Input
+- `internal/check` — registry `All` and each check file
+- `internal/sched` — cost, plan wave, wait
+- `internal/exec` — send, append timeline
+- `internal/observe` — Timeline
+- `internal/hdr` — Interpret / Write
+- `internal/campaign` — Run loop
+- `internal/render` — text, JSON, sparkline
+- `internal/brokenserver` — token, fixed, race algos
 
 ### Checks
 
 | Kind | Claim |
 |------|--------|
-| accuracy | allowed count near limit over a steady window |
-| boundary | no ~2x leak across fixed-window edges |
-| burst | concurrent N does not exceed limit by race |
-| isolation | identity A exhaustion does not throttle B; header rotation does not bypass |
-| multi_instance | optional; shared vs per-origin counting |
+| headers | 429 (not 200/403/503), Retry-After, RateLimit or X-RateLimit consistency |
+| accuracy | steady pace stays near the stated quota |
+| boundary | no ~2× leak across a fixed-window reset |
+| burst | overlapping requests do not exceed the quota by race |
+| isolation | one identity's exhaustion does not throttle another; header rotation does not bypass |
+| multi-instance | optional; shared vs per-origin counting |
 | recovery | after 429, success resumes at Retry-After/reset, not earlier |
-| headers | 429 status, Retry-After, RateLimit / X-RateLimit consistency |
 
-### Safety defaults
+### Safety
 
-- Default max requests: 200
-- Non-loopback hosts require `--yes`
-- `--dry-run` never sends
+- Defaults: 200 requests, 64 in flight, 30 minutes wall, 10s per request
+- Non-loopback requires `--yes` (DNS fail closed). Dry-run skips that guard.
+- No retries. No partial stdout report on crash.
+
+### Proof
+
+Each check has a unit verdict on a hand-built timeline and a proof through `campaign.Run` against `brokenserver`. Unkey is mentioned in the README only as one atomic, identity-keyed fix path when a check fails.
 
 ## Tradeoffs
 
-- We accept a two-phase plan/execute model in exchange for dry-run and measurable timing.
-- We accept ASCII timeline charts first, not a TUI, to keep the binary simple.
-- Multi-instance is opt-in via multiple `--origin` values.
+- We accept quiet waits up to a policy window so measurements start on a restored quota.
+- We accept inconclusive when a MustHit placement is already past, instead of sending a late straddle and calling it a boundary result.
+- We accept Check as the extension point, not a global sealed campaign script.
+
+## Synthesis
+
+Base: candidate-1. Grafts: absolute GridAt timing, cost preflight, single Input boundary, broken-server pairing. Rejected: global CampaignPlan extension point, Check-owned sockets, shared corpus for all scorers.
 
 ## Next step
 
-Implement module scaffold and a demo that fails `boundary` against a fixed-window test server.
+Implement observe + hdr roundtrip, then boundary.Verdict against hand-built timelines, then brokenserver fixed-window proof.
