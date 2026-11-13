@@ -237,6 +237,7 @@ func recovery(c spec.Campaign, log observe.Log) Verdict {
 	for _, evs := range groups {
 		sort.Slice(evs, func(i, j int) bool { return evs[i].Started.Before(evs[j].Started) })
 		var until time.Time
+		var heard time.Time
 		source := ""
 		blocked := false
 		for _, e := range evs {
@@ -247,11 +248,20 @@ func recovery(c spec.Campaign, log observe.Log) Verdict {
 				}
 				sawDeadline = true
 				until = d
+				heard = e.Ended
+				if heard.IsZero() {
+					heard = e.Started
+				}
 				source = src
 				blocked = true
 				continue
 			}
 			if !blocked || !e.Allowed() {
+				continue
+			}
+			// A sibling from the same burst can start after the 429 was
+			// recorded and still have been sent before that 429 came back.
+			if !e.Started.After(heard) {
 				continue
 			}
 			slack := 40 * time.Millisecond
@@ -280,27 +290,32 @@ func multiInstance(c spec.Campaign, log observe.Log) Verdict {
 	if len(c.Origins) < 2 {
 		return verdict(spec.CheckMultiInstance, Warn, "need at least two --origin values to compare hosts", metrics)
 	}
-	per := map[int]int{}
+	sent := map[int]bool{}
+	allowedCount := map[int]int{}
 	for _, e := range log.Events {
-		if e.Tag != spec.TagBurst || e.Err != "" || !e.Allowed() {
+		if e.Tag != spec.TagBurst || e.Err != "" {
 			continue
 		}
-		per[e.Origin]++
+		sent[e.Origin] = true
+		if e.Allowed() {
+			allowedCount[e.Origin]++
+		}
 	}
-	if len(per) < 2 {
+	if len(sent) < 2 {
 		return verdict(spec.CheckMultiInstance, Warn, "the burst did not reach two origins", metrics)
 	}
 	total := 0
 	minAllowed := -1
-	for _, allowed := range per {
-		total += allowed
-		if minAllowed < 0 || allowed < minAllowed {
-			minAllowed = allowed
+	for origin := range sent {
+		nAllowed := allowedCount[origin]
+		total += nAllowed
+		if minAllowed < 0 || nAllowed < minAllowed {
+			minAllowed = nAllowed
 		}
 	}
 	metrics["allowed"] = float64(total)
 	tol := tolerance(n)
-	if minAllowed >= n-tol && total >= len(per)*(n-tol) {
+	if minAllowed >= n-tol && total >= len(sent)*(n-tol) {
 		return verdict(spec.CheckMultiInstance, Fail, fmt.Sprintf("each origin allowed about %d requests on its own (%d total, limit %d)", minAllowed, total, n), metrics)
 	}
 	if total <= n+tol {

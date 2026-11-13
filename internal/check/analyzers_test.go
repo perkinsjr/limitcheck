@@ -168,6 +168,18 @@ func TestRecovery(t *testing.T) {
 	if v := recovery(c, onTime); v.Status != Pass {
 		t.Fatalf("on time: %s %s", v.Status, v.Message)
 	}
+	// A 200 that was already in flight when the 429 returned is not a retry.
+	inflight := observe.Log{Events: []observe.Event{
+		{
+			Status: 429, Started: reset.Add(-time.Second), Ended: reset.Add(-900 * time.Millisecond),
+			Body: body, Header: http.Header{"Retry-After": []string{"1"}},
+		},
+		ev(spec.TagBurst, 0, 200, reset.Add(-990*time.Millisecond), nil, ""),
+		ev(spec.TagProbe, 0, 200, reset.Add(50*time.Millisecond), nil, ""),
+	}}
+	if v := recovery(c, inflight); v.Status != Pass {
+		t.Fatalf("in flight: %s %s", v.Status, v.Message)
+	}
 	if v := recovery(c, observe.Log{}); v.Status != Warn {
 		t.Fatalf("empty: %s", v.Status)
 	}
@@ -194,6 +206,18 @@ func TestMultiInstance(t *testing.T) {
 	}
 	if v := multiInstance(c, shared); v.Status != Pass {
 		t.Fatalf("shared: %s %s", v.Status, v.Message)
+	}
+	oneSided := observe.Log{}
+	for i := 0; i < 5; i++ {
+		e := ev(spec.TagBurst, 0, 200, time.Unix(10, 0), nil, "")
+		e.Origin = 0
+		oneSided.Events = append(oneSided.Events, e)
+	}
+	denied := ev(spec.TagBurst, 0, 429, time.Unix(10, 0), nil, "")
+	denied.Origin = 1
+	oneSided.Events = append(oneSided.Events, denied)
+	if v := multiInstance(c, oneSided); v.Status != Pass {
+		t.Fatalf("one origin took the whole limit: %s %s", v.Status, v.Message)
 	}
 	if v := multiInstance(camp(5, time.Second), shared); v.Status != Warn {
 		t.Fatalf("one origin: %s", v.Status)
