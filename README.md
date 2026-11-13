@@ -6,18 +6,16 @@ Exit codes: any fail → `1`; nothing failed but something was inconclusive → 
 
 ## How to use
 
-Needs Go 1.22+.
+Needs Go 1.22+. Puts the binary on your `PATH` (usually `$(go env GOPATH)/bin`):
 
 ```
-git clone https://github.com/perkinsjr/limitcheck.git
-cd limitcheck
-go build -o limitcheck ./cmd/limitcheck
+go install github.com/perkinsjr/limitcheck/cmd/limitcheck@latest
 ```
 
 Against a local server:
 
 ```
-./limitcheck http://127.0.0.1:8080/v1/items \
+limitcheck http://127.0.0.1:8080/v1/items \
   --limit 5/1s \
   --header 'Authorization: Bearer secret'
 ```
@@ -27,7 +25,7 @@ Against a local server:
 A host that is not `127.0.0.1`, `::1`, or `localhost` needs `--yes`, or the tool refuses and sends nothing:
 
 ```
-./limitcheck http://203.0.113.5/items --limit 5/1s
+limitcheck http://203.0.113.5/items --limit 5/1s
 ```
 
 ```
@@ -37,7 +35,7 @@ limitcheck: 203.0.113.5 is not a local address, so pass --yes to send traffic th
 `--dry-run` prints the plan and exits `0` without dialing. Public URLs do not need `--yes` for a dry run.
 
 ```
-./limitcheck --dry-run --limit 5/1s http://203.0.113.5/items
+limitcheck --dry-run --limit 5/1s http://203.0.113.5/items
 ```
 
 ```
@@ -52,14 +50,16 @@ recovery       exhaust    7
 recovery       follower   2
 ```
 
-Save settings in `limitcheck.yaml` and run `./limitcheck --config limitcheck.yaml`. Flags you set on the command override the file. Pass `--json` for machine-readable output.
+Save settings in `limitcheck.yaml` and run `limitcheck --config limitcheck.yaml`. Flags you set on the command override the file. Pass `--json` for machine-readable output.
+
+Working on the tool itself? From a clone: `go build -o limitcheck ./cmd/limitcheck`.
 
 ## Examples
 
 Prove the built-in limiters first:
 
 ```
-./limitcheck --self-test
+limitcheck --self-test
 ```
 
 ```
@@ -78,7 +78,7 @@ self-test passed
 **Fail** — fixed window leaks across a clock edge:
 
 ```
-./limitcheck demo --scenario fixed
+limitcheck demo --scenario fixed
 ```
 
 ```
@@ -105,7 +105,7 @@ Exit code `1`. Boundary saw about twice the limit across the edge.
 **Pass** — sliding window holds:
 
 ```
-./limitcheck demo --scenario token
+limitcheck demo --scenario token
 ```
 
 ```
@@ -130,7 +130,7 @@ no check failed
 
 Exit code `0`.
 
-Serve a broken limiter yourself with `./limitcheck serve --addr 127.0.0.1:0 --limit 10/2s --algo fixed` (`token`, `fixed`, or `race`).
+Serve a broken limiter yourself with `limitcheck serve --addr 127.0.0.1:0 --limit 10/2s --algo fixed` (`token`, `fixed`, or `race`).
 
 ## What each check means
 
@@ -160,7 +160,7 @@ In CI, exit `1` fails the job. Exit `2` means the run was inconclusive or never 
 
 ## How to use in CI
 
-This workflow builds the binary, proves the tool against its own broken servers, then fails the job if a real target fails a check. Set `LIMITCHECK_URL`, `LIMITCHECK_LIMIT`, and optional auth in repository secrets/vars. Drop the real-target step until you have a loopback or staging host you are willing to hit with `--yes`.
+Install the same way users do, prove the binary, then fail the job if a real target fails a check. Set `LIMITCHECK_URL`, `LIMITCHECK_LIMIT`, and optional auth in repository secrets/vars. Drop the real-target step until you have a host you are willing to hit with `--yes`.
 
 ```yaml
 # .github/workflows/limitcheck.yml
@@ -174,17 +174,15 @@ jobs:
   rate-limit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
 
-      - name: Build
-        run: go build -o limitcheck ./cmd/limitcheck
+      - name: Install limitcheck
+        run: go install github.com/perkinsjr/limitcheck/cmd/limitcheck@latest
 
       - name: Self-test
-        run: ./limitcheck --self-test
+        run: limitcheck --self-test
 
       - name: Check staging limit
         env:
@@ -197,7 +195,7 @@ jobs:
             echo "Set LIMITCHECK_URL and LIMITCHECK_LIMIT to run against a real host."
             exit 0
           fi
-          ./limitcheck "$URL" \
+          limitcheck "$URL" \
             --limit "$LIMIT" \
             --header "Authorization: Bearer $TOKEN" \
             --yes \
@@ -209,9 +207,9 @@ A one-off script does the same thing locally:
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-go build -o limitcheck ./cmd/limitcheck
-./limitcheck --self-test
-./limitcheck "$LIMITCHECK_URL" --limit "$LIMITCHECK_LIMIT" --yes
+go install github.com/perkinsjr/limitcheck/cmd/limitcheck@latest
+limitcheck --self-test
+limitcheck "$LIMITCHECK_URL" --limit "$LIMITCHECK_LIMIT" --yes
 ```
 
 Because a failed check exits `1`, `set -e` (and GitHub Actions) stop the job there.
