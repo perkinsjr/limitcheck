@@ -1,70 +1,174 @@
-# Check whether a rate limit holds
+# limitcheck
 
-limitcheck sends HTTP requests and reports whether the limit you named is the limit the server enforces. A check is pass, warn, fail, or inconclusive. If any check fails, the process exits 1, so CI stops the job.
+You name the rate limit you expect. limitcheck sends the traffic that would expose a bad limiter, then prints pass, warn, fail, or inconclusive for each check.
 
-## Run it against a local server
+Exit codes: any fail → `1`; no fail but something inconclusive → `2`; pass, warn, or dry-run → `0`; did not start → `2`.
 
-Build the binary from this repo.
+## Build
 
 ```
 go build -o limitcheck ./cmd/limitcheck
 ```
 
-Point it at a URL on this machine and name the limit as a count and a duration.
+Needs Go 1.22+.
+
+## Fastest path: prove the tool works
 
 ```
-./limitcheck http://127.0.0.1:8080/v1/items --limit 100/60s --header 'Authorization: Bearer secret'
+./limitcheck --self-test
 ```
 
-The report prints one line per check, then a timeline. `+` means the server accepted the request. `x` means the server rejected it. `#` means that slice of the run had both. `.` means nothing was sent then.
+```
+token          ok  headers pass; accuracy pass; boundary pass; burst pass; recovery pass; isolation pass
+fixed          ok  headers pass; accuracy pass; boundary fail; burst pass; recovery pass
+race           ok  burst fail
+per-instance   ok  multi_instance fail
+shared         ok  multi_instance pass; isolation fail
+early          ok  recovery fail
+bad-headers    ok  headers fail
+open           ok  accuracy fail
+rotate         ok  isolation fail
+self-test passed
+```
 
-Each check waits out one full window before it measures, so earlier traffic is not still inside the window. A 60s limit takes a few minutes. A limit of 100 per 60s plans 646 requests. The default cap is 200, so that command exits 2 until you raise `--max-requests`.
+Exit `0` means every broken local limiter failed the check that matches its bug, and the good limiter (`token`) passed.
 
-The window has to be at least 400ms.
+## Check one broken limiter and read the report
 
-## Refuse a host that is not local
+```
+./limitcheck demo --scenario fixed
+```
 
-A real send to a host other than `localhost`, `127.0.0.1`, or `::1` is refused unless you pass `--yes`. Nothing is sent. The command compares the host text and does not resolve DNS, so a name that points at this machine is still refused.
+```
+scenario fixed
+target http://127.0.0.1:43573/
+limit 5 per 500ms
+sent 40, allowed 31, rejected 9, errors 0, max drift 1ms
+
+headers        pass          429 responses include Retry-After, a rate-limit header, and a JSON reset, and remaining does not go up
+accuracy       pass          steady run allowed 5 requests, limit is 5
+boundary       fail          allowed 10 requests across the window edge, limit is 5 (2.0x)
+burst          pass          concurrent burst allowed 5 requests, limit is 5
+recovery       pass          the next success was at or after the advertised reset
+
+timeline 4.58s
++#x..........+#x........+.+............#............#x.....+
++ allowed   x rejected   # both   . idle
+
+1 check failed
+```
+
+`boundary` failed: the server let through about twice the limit across a clock edge. Exit code is `1`.
+
+A clean pass looks like this (`token` is a sliding window that holds):
+
+```
+./limitcheck demo --scenario token
+```
+
+```
+scenario token
+target http://127.0.0.1:43809/
+limit 5 per 500ms
+sent 55, allowed 37, rejected 18, errors 0, max drift 1ms
+
+headers        pass          …
+accuracy       pass          steady run allowed 5 requests, limit is 5
+boundary       pass          second burst allowed 0 after the edge, limit is 5
+burst          pass          concurrent burst allowed 5 requests, limit is 5
+recovery       pass          the next success was at or after the advertised reset
+isolation      pass          the second identity was still allowed, and a fresh request id did not raise the limit
+
+no check failed
+```
+
+Other useful demos:
+
+| Command | What you should see |
+|---------|---------------------|
+| `demo --scenario race` | `burst fail` — concurrent burst allowed 7, limit is 5 |
+| `demo --scenario open` | `accuracy fail` — steady run allowed 7, limit is 5 |
+| `demo --scenario bad-headers` | `headers fail` — rejected with status 503, want 429 |
+| `demo --scenario early` | `recovery fail` — success before the advertised reset |
+
+`fixed-window` and `racy` are older names for `fixed` and `race`. `correct` is an older name for `token`.
+
+## Point it at your own server
+
+Localhost needs no extra flag:
+
+```
+./limitcheck http://127.0.0.1:8080/v1/items \
+  --limit 5/1s \
+  --header 'Authorization: Bearer secret'
+```
+
+`--limit` is `count/window`, for example `100/60s` or `5/500ms`. The window must be at least 400ms.
+
+Each check waits out one full window before measuring, so leftover traffic is not still counting. A 60s limit takes a few minutes. A limit of 100 per 60s plans hundreds of requests; the default cap is 200, so raise `--max-requests` if the plan is bigger than that.
+
+## Safety: remote hosts
+
+A real send to any host other than `127.0.0.1`, `::1`, or `localhost` is refused unless you pass `--yes`. The tool compares the host text and does not look up DNS.
 
 ```
 ./limitcheck http://203.0.113.5/items --limit 5/1s
 ```
 
-The error names the host and `--yes`. The exit code is 2.
+```
+limitcheck: 203.0.113.5 is not a local address, so pass --yes to send traffic there
+```
 
-Pass `--yes` only when you intend to send that traffic.
+Exit `2`. Nothing was sent. Add `--yes` only when you mean to hit that host.
 
-## Preview the plan
+## Preview without sending
 
-`--dry-run` prints each wave and its request count, then sends nothing. A dry run does not connect, so a public URL does not need `--yes`.
+`--dry-run` prints the wave plan and exits `0`. It never dials, so a public URL does not need `--yes`.
 
 ```
 ./limitcheck --dry-run --limit 5/1s http://203.0.113.5/items
 ```
 
-The first line gives the request count and says nothing was sent. The exit code is 0 when the plan is under the cap.
+```
+dry run, 40 requests, nothing sent
+limit 5 per 1s
+headers        sample     7
+accuracy       steady     7
+boundary       pre        5
+boundary       post       5
+burst          burst      7
+recovery       exhaust    7
+recovery       follower   2
+```
 
-## Read a failure
+## What each check means
 
-**accuracy.** The steady series was allowed a count that is not close to the limit you named.
+| Check | One sentence |
+|-------|--------------|
+| **headers** | Rejections are 429s with Retry-After and a rate-limit header, remaining does not climb, and the body has a reset time. |
+| **accuracy** | A steady series is allowed about the count you named, not a lot more or less. |
+| **boundary** | A burst just before a clock edge plus a burst just after does not get ~2× the limit. |
+| **burst** | Overlapping requests do not sneak past the limit (inconclusive if the limit is 64 or higher). |
+| **recovery** | After a 429, the next success is at or after the reset time the server advertised, not earlier. |
+| **isolation** | Joins when you pass two `--identity` values or `--key-by`. One client filling the bucket must not throttle another; rotating `X-Limitcheck-Request` must not mint a new bucket. |
+| **multi_instance** | Joins when you pass two `--origin` values and `--sharing`. Shared means one counter; without sharing, each origin keeping its own full limit fails this check. |
 
-**boundary.** A burst just before a clock edge and a burst just after it were both allowed, so the server accepted about twice the limit. The edge is your window length stepped along the system clock. If those bursts miss the edge, the check is inconclusive and the exit code is 2, unless another check failed.
+Default run order: headers, accuracy, boundary, burst, recovery. Isolation and multi_instance join only when the flags above are set (or you name them with `--check`).
 
-**burst.** Requests sent at the same moment were allowed more times than the limit. At most 64 run at once. If the limit is 64 or higher, this check is inconclusive, because a race below that cap would still be under the limit.
+## How to read a report
 
-**isolation.** This joins the run when you pass two `--identity` values, or `--key-by`. After the first client filled the limit, a second client was rejected too. A new `X-Limitcheck-Request` on every call fails this check when the server treats that header as a new client. Separate extra headers in one identity with `;`.
+1. First lines: target, stated limit, how many were sent / allowed / rejected.
+2. One line per check: name, status, short reason.
+3. Timeline: `+` allowed, `x` rejected, `#` both in that slice, `.` idle.
+4. Last line: how many checks failed.
 
-**headers.** A rejection used a status other than 429. A 429 had no `Retry-After`, or it had neither a `RateLimit` header nor an `X-RateLimit-*` header. The remaining count went up across the allowed requests. The 429 body was not JSON with a reset time.
+Pass `--json` for machine-readable output. In CI, exit `1` fails the job.
 
-**recovery.** A request sent after a 429 succeeded before the reset time the server advertised. The tool reads that time from the 429, then sends one follow-up. It does not schedule a second follow-up from that reply.
+If **headers** fails and an Unkey gateway fronts the API, compare with Unkey's [rate limited](https://www.unkey.com/docs/errors/frontline/client/rate_limited) 429: it sends `Retry-After` and `X-RateLimit-*`, and the JSON body needs a reset time for this check to pass.
 
-**multi_instance.** Each `--origin` kept its own counter and allowed about a full limit. The check joins the run when you pass two origins and `--sharing`.
+## Config file
 
-If the headers check fails on an API that Unkey fronts, compare the body with the gateway [rate limited](https://www.unkey.com/docs/errors/frontline/client/rate_limited) error. That 429 sends `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`. The JSON body carries `error.code`. The reset time is only in `X-RateLimit-Reset`. This check fails until the body includes a reset time.
-
-## Save the settings in a file
-
-Create `limitcheck.yaml`.
+`limitcheck.yaml`:
 
 ```yaml
 url: http://127.0.0.1:8080/v1/items
@@ -95,32 +199,12 @@ max_requests: 200
 ./limitcheck --config limitcheck.yaml --json
 ```
 
-A flag you set on the command replaces that field from the file. `--json` prints the report as JSON on standard output. Pass `--method` and `--body` to set those from the command line.
+A flag you set on the command overrides that field from the file. Separate headers inside one `--identity` with `;` (for example `name=a; X-Identity: a`).
 
-The `origins` list adds hosts next to `url`. Two origins and `sharing: true` turn on `multi_instance` when you do not name checks yourself.
-
-## Run the built-in broken servers
-
-The command includes small servers that break one rule each.
-
-```
-./limitcheck --self-test
-```
-
-The command exits 0 when every broken server failed the check that matches its bug, and the token limiter passed. `fixed` fails boundary. `race` fails burst. `per-instance` fails multi_instance. `fixed-window` and `racy` are older names for `fixed` and `race`.
-
-To read the full report for one server, name it.
-
-```
-./limitcheck demo --scenario fixed
-```
-
-That report fails the boundary check, so the exit code is 1. A local run allowed 10 requests across the edge when the limit was 5.
-
-To serve one limiter yourself, pick `token`, `fixed`, or `race`.
+## Serve a broken limiter yourself
 
 ```
 ./limitcheck serve --addr 127.0.0.1:0 --limit 10/2s --algo fixed
 ```
 
-`token` keeps a sliding window. `fixed` resets on a clock boundary and allows another full limit on the far side. `race` lets overlapping requests through.
+`--algo` is `token` (holds), `fixed` (leaks across the clock edge), or `race` (lets overlapping requests through). The process prints the listen URL, then waits until you interrupt it.
