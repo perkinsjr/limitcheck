@@ -23,18 +23,15 @@ type Rate struct {
 	Window time.Duration
 }
 
-// Policy is that claim. Checks score a timeline against it.
 type Policy struct {
 	Rate Rate
 }
 
-// Header is one request header.
 type Header struct {
 	Name  string
 	Value string
 }
 
-// Identity is one caller. Two identities are how isolation tells clients apart.
 type Identity struct {
 	Name    string
 	Headers []Header
@@ -48,12 +45,10 @@ type Origin struct {
 	RawQuery string
 }
 
-// URL is the request target for this origin.
 func (o Origin) URL() string {
 	return (&url.URL{Scheme: o.Scheme, Host: o.Host, Path: o.Path, RawQuery: o.RawQuery}).String()
 }
 
-// Caps bound a run. They are small on purpose.
 type Caps struct {
 	MaxRequests int
 	MaxInFlight int
@@ -61,7 +56,6 @@ type Caps struct {
 	PerRequest  time.Duration
 }
 
-// DefaultCaps is the safety limit for a run that did not set its own.
 func DefaultCaps() Caps {
 	return Caps{
 		MaxRequests: DefaultMaxRequests,
@@ -71,7 +65,6 @@ func DefaultCaps() Caps {
 	}
 }
 
-// Input is one invocation after flags and YAML are merged.
 type Input struct {
 	Method     string
 	Body       string
@@ -88,7 +81,6 @@ type Input struct {
 	JSON       bool
 }
 
-// Kind says when a wave may fire.
 type Kind int
 
 const (
@@ -116,7 +108,6 @@ type Gate struct {
 	MustHit bool
 }
 
-// Action is what the process was asked to do.
 type Action int
 
 const (
@@ -127,7 +118,6 @@ const (
 	ActionServe
 )
 
-// Command is a parsed invocation.
 type Command struct {
 	Action   Action
 	Input    Input

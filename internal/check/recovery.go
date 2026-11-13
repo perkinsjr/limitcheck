@@ -27,8 +27,6 @@ func RecoveryCheck() Check {
 	}
 }
 
-// recoveryFollow reads the sealed exhaust log and returns one wave.
-// That wave carries its own fire times, so it cannot be deferred again.
 func recoveryFollow(tl observe.Timeline, now time.Time) (sched.Wave, bool) {
 	for _, e := range tl.Events {
 		if e.Marker != "exhaust" || e.Status != 429 || e.Err != "" {
@@ -82,7 +80,6 @@ func recoveryVerdict(_ spec.Policy, tl observe.Timeline) Verdict {
 		if e.Err != "" || !e.OK() {
 			continue
 		}
-		// Ignore anything that was in flight before the 429 came back.
 		if !heard.IsZero() && !e.SentAt.After(heard) {
 			continue
 		}

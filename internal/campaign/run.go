@@ -1,4 +1,3 @@
-// Package campaign runs each check's waves, then asks that check for a verdict.
 package campaign
 
 import (

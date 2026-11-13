@@ -5,12 +5,8 @@ import (
 	"time"
 )
 
-// The sleep in the racy limiter is the bug. Waiters all read the count, then
-// all increment, so a burst larger than the limit still gets through.
 const raceGap = 30 * time.Millisecond
 
-// earlyGrant is long enough that the overlapping burst is still rejected,
-// and short enough that a follow-up a moment later is allowed.
 const earlyGrant = 20 * time.Millisecond
 
 type limiter interface {

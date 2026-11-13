@@ -1,4 +1,3 @@
-// Package brokenserver hosts limiters that fail in known ways.
 package brokenserver
 
 import (
@@ -13,13 +12,11 @@ import (
 	"github.com/perkinsjr/limitcheck/internal/spec"
 )
 
-// Server is one or two local listeners.
 type Server struct {
 	URLs []string
 	stop func()
 }
 
-// URL is the first listener.
 func (s *Server) URL() string {
 	if len(s.URLs) == 0 {
 		return ""
@@ -151,8 +148,6 @@ func (h handler) key(r *http.Request) string {
 	if id == "" {
 		id = "anon"
 	}
-	// rotate folds the per-request id into the key on purpose, so a client
-	// that changes that header looks like a new caller.
 	if h.algo == "rotate" {
 		return id + "\n" + r.Header.Get("X-Limitcheck-Request")
 	}

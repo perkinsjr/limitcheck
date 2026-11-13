@@ -26,12 +26,10 @@ type Wave struct {
 	Follower bool
 }
 
-// Stimulus is the waves for one check.
 type Stimulus struct {
 	Waves []Wave
 }
 
-// Slot is one request at a stamped time.
 type Slot struct {
 	GridAt   time.Time
 	NotAfter time.Time
@@ -44,14 +42,12 @@ type Slot struct {
 	Index    int
 }
 
-// Planned is a wave after its grid times exist.
 type Planned struct {
 	Wave  Wave
 	Slots []Slot
 	Held  bool
 }
 
-// Cost is how many requests the waves will send.
 func Cost(waves []Wave, origins int) int {
 	if origins < 1 {
 		origins = 1
@@ -70,7 +66,6 @@ func Cost(waves []Wave, origins int) int {
 	return n
 }
 
-// WithinCaps rejects a plan that would send more than the hard cap.
 func WithinCaps(cost int, caps spec.Caps) error {
 	if caps.MaxRequests < 1 {
 		return fmt.Errorf("max requests must be at least 1")
@@ -112,8 +107,6 @@ func Stamp(w Wave, now time.Time, window time.Duration, origins int) Planned {
 	base := now.Add(25 * time.Millisecond)
 	switch w.Gate.Kind {
 	case spec.Ready:
-		// A full window of quiet, then the next boundary, so earlier checks
-		// are outside the window this burst is measuring.
 		base = NextBoundary(now.Add(window).Add(30*time.Millisecond), window).Add(w.Offset)
 	case spec.Immediate, spec.AfterPrevious, spec.AfterLast, spec.WhenIdle, spec.RetryAfter:
 		base = now.Add(25 * time.Millisecond).Add(w.Offset)

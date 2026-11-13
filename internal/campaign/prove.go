@@ -12,7 +12,6 @@ import (
 	"github.com/perkinsjr/limitcheck/internal/spec"
 )
 
-// Scenario is one built-in limiter and the verdicts it should produce.
 type Scenario struct {
 	Name       string
 	Algo       string
@@ -24,7 +23,6 @@ type Scenario struct {
 	Text map[string]string
 }
 
-// Scenarios is the proof matrix. Each check fails on a limiter that has its bug.
 func Scenarios() []Scenario {
 	return []Scenario{
 		{Name: "token", Algo: "token", Identities: 2},
@@ -39,7 +37,6 @@ func Scenarios() []Scenario {
 	}
 }
 
-// Alias maps older scenario names onto the algo list.
 func Alias(name string) string {
 	switch name {
 	case "fixed-window":
@@ -53,7 +50,6 @@ func Alias(name string) string {
 	}
 }
 
-// Find returns a scenario by name or alias.
 func Find(name string) (Scenario, bool) {
 	name = Alias(name)
 	for _, sc := range Scenarios() {
@@ -64,7 +60,6 @@ func Find(name string) (Scenario, bool) {
 	return Scenario{}, false
 }
 
-// Prove runs the scenario against a local broken server.
 func Prove(ctx context.Context, sc Scenario) (render.Report, error) {
 	rate := spec.Rate{Count: 5, Window: 500 * time.Millisecond}
 	srv, err := brokenserver.Start(rate, sc.Algo)
@@ -117,7 +112,6 @@ func origin(raw string) spec.Origin {
 	return spec.Origin{Scheme: "http", Host: host, Path: path}
 }
 
-// Matches reports how the verdicts differ from the scenario.
 func (sc Scenario) Matches(r render.Report) error {
 	if len(r.Verdicts) == 0 {
 		return fmt.Errorf("%s produced no verdicts", sc.Name)

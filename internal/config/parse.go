@@ -1,4 +1,3 @@
-// Package config reads flags and YAML into a spec.Input.
 package config
 
 import (
@@ -16,7 +15,6 @@ import (
 // ErrHelp means the user asked for the usage text.
 var ErrHelp = errors.New("help")
 
-// Usage is the help text.
 func Usage() string {
 	return `limitcheck checks whether an HTTP rate limit behaves the way you described.
 

@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// Shape is how a response is written. The broken server uses both.
 type Shape int
 
 const (
@@ -20,7 +19,6 @@ const (
 	ShapeWrong
 )
 
-// Decision is the limiter's answer, before it becomes bytes.
 type Decision struct {
 	Allowed   bool
 	Limit     int
@@ -87,8 +85,6 @@ func Write(w http.ResponseWriter, shape Shape, d Decision) {
 	w.Header().Set("Retry-After", strconv.Itoa(sec))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests)
-	// Milliseconds survive a window shorter than one second. Whole seconds
-	// would round a 500ms reset onto the wrong side of the edge.
 	_, _ = fmt.Fprintf(w, `{"reset":%d}`, d.Reset.UnixMilli())
 }
 

@@ -1,4 +1,3 @@
-// Package render prints a report as text or JSON.
 package render
 
 import (
@@ -12,14 +11,12 @@ import (
 	"github.com/perkinsjr/limitcheck/internal/spec"
 )
 
-// WaveLine is one row of a dry run.
 type WaveLine struct {
 	Check string
 	Name  string
 	Count int
 }
 
-// Report is the outcome of a run, or a dry run that sent nothing.
 type Report struct {
 	URL      string
 	Limit    spec.Rate
@@ -54,7 +51,6 @@ func (r Report) ExitCode() int {
 	return 0
 }
 
-// WriteText prints the human report.
 func WriteText(w io.Writer, r Report) {
 	if r.DryRun {
 		fmt.Fprintf(w, "dry run, %d requests, nothing sent\n", r.Planned)
@@ -90,7 +86,6 @@ func WriteText(w io.Writer, r Report) {
 	}
 }
 
-// WriteJSON prints the machine report.
 func WriteJSON(w io.Writer, r Report) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -184,7 +179,6 @@ func tally(events []observe.Event) (sent, allowed, rejected, errs int, drift tim
 	return
 }
 
-// Timeline draws allowed and rejected requests across the run.
 func Timeline(events []observe.Event, width int) (string, string) {
 	if width < 4 {
 		width = 4

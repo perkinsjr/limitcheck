@@ -16,7 +16,6 @@ type flagSetter struct {
 	name string
 }
 
-// valueFlags take the next argument when it is not attached with '='.
 var valueFlags = map[string]bool{
 	"limit":        true,
 	"method":       true,
@@ -33,7 +32,6 @@ var valueFlags = map[string]bool{
 	"algo":         true,
 }
 
-// reorderArgs moves positionals to the end so a url can sit before flags.
 func reorderArgs(args []string) []string {
 	var flags []string
 	var positionals []string

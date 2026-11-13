@@ -25,7 +25,6 @@ type Event struct {
 	Held bool
 }
 
-// Drift is how late the send left compared with the stamped grid time.
 func (e Event) Drift() time.Duration {
 	if e.SentAt.IsZero() || e.GridAt.IsZero() {
 		return 0

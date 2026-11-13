@@ -7,7 +7,6 @@ import (
 	"github.com/perkinsjr/limitcheck/internal/spec"
 )
 
-// Status is the outcome of one check.
 type Status string
 
 const (
@@ -17,7 +16,6 @@ const (
 	Inconclusive Status = "inconclusive"
 )
 
-// Verdict is one check's result. It is pure data.
 type Verdict struct {
 	Name    string
 	Status  Status
