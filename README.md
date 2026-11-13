@@ -132,6 +132,25 @@ Exit code `0`.
 
 Serve a broken limiter yourself with `limitcheck serve --addr 127.0.0.1:0 --limit 10/2s --algo fixed` (`token`, `fixed`, or `race`).
 
+### Runnable proofs (`examples/`)
+
+From a clone, prove every check mode with expected exit codes:
+
+```
+./examples/run-all.sh
+```
+
+That runs `--self-test` plus each `demo --scenario` (token pass; fixed / race / open / bad-headers / early / rotate / per-instance / shared fail). See [`examples/README.md`](examples/README.md) for the full matrix.
+
+**Unkey** — a local target backed by Unkey's ratelimit API (needs a root key; never commit it):
+
+```
+export UNKEY_ROOT_KEY=unkey_...
+./examples/unkey/run.sh
+```
+
+Expected exit `0` when the key is set. Without `UNKEY_ROOT_KEY` the script exits `2` and names the env vars (`UNKEY_ROOT_KEY`, optional `UNKEY_NAMESPACE`, `UNKEY_LIMIT`, `UNKEY_WINDOW_MS`).
+
 ## What each check means
 
 | Check | Meaning |
