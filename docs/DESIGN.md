@@ -30,9 +30,9 @@ Base is a check registry with pure verdicts. Each check owns its stimulus and it
 1. Parse CLI or YAML into `spec.Input` at the boundary.
 2. Select checks from registry `All` (or named `--check` values).
 3. For each check, `Stimulus` returns immutable waves (counts, in-flight, interval, identities, fanout, `Gate`).
-4. Preflight `sched.Cost` against `--max-requests`. Refuse non-loopback hosts without `--yes`.
+4. Preflight `sched.Cost` against `--max-requests`. Refuse hosts whose URL host is not literal loopback (`127.0.0.1`, `::1`, `localhost`) without `--yes`. No DNS inside the gate. Dry-run skips that guard.
 5. `--dry-run` prints the wave table and exits 0 without dialing.
-6. `sched` expands each wave to absolute `GridAt` slots. One timer per wait. No rebase after drift. Missed `MustHit` gates hold the wave.
+6. `sched` expands each wave to clock-free offsets, then stamps `GridAt = epoch + offset` immediately before that wave fires. One timer per wait. No rebase after drift. Missed `MustHit` gates hold the wave. Recovery may arm one follower wave from the sealed exhaust log's Retry-After; that follower cannot defer again.
 7. `exec` sends at most once per slot and appends `RequestEvent` values (`GridAt`, `SentAt`, status, reading). Drift is `SentAt - GridAt`, derived not stored.
 8. `hdr.Interpret` is the only reader of status and rate-limit headers. `hdr.Write` is the only writer, including the broken server.
 9. `Verdict(policy, timeline)` is pure. No context, clock, or client.
@@ -77,8 +77,8 @@ Base is a check registry with pure verdicts. Each check owns its stimulus and it
 ### Safety
 
 - Defaults: 200 requests, 64 in flight, 30 minutes wall, 10s per request
-- Non-loopback requires `--yes` (DNS fail closed). Dry-run skips that guard.
-- No retries. No partial stdout report on crash.
+- Non-literal-loopback hosts require `--yes`. Dry-run skips that guard.
+- No HTTP retries. Transport errors are observations. No partial stdout report on crash.
 
 ### Proof
 
@@ -92,7 +92,11 @@ Each check has a unit verdict on a hand-built timeline and a proof through `camp
 
 ## Synthesis
 
-Base: candidate-1. Grafts: absolute GridAt timing, cost preflight, single Input boundary, broken-server pairing. Rejected: global CampaignPlan extension point, Check-owned sockets, shared corpus for all scorers.
+Base: candidate-1 (check registry, pure Verdict, closed Gate, hdr Interpret/Write).
+
+Grafts from candidate-2: stamp `epoch+offset` immediately before fire; pure admit on literal loopback (no DNS); recovery as one follower reserve armed from the sealed exhaust log; no open phase loop; transport errors are observations, never retried.
+
+Rejected from candidate-2 as the base: global sealed CampaignSpec/claims as the extension point; single flat package of check rows; putting every absolute time in one phase-0 plan (loses Retry-After-driven recovery).
 
 ## Next step
 

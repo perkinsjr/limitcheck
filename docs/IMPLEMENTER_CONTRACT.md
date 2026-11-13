@@ -14,3 +14,9 @@ Pull `main` before your next commit. `docs/DESIGN.md` is the contract.
 - Push verified work to `main` only. No PR.
 
 If you already scaffolded a global CampaignPlan as the extension point, scrap it and rebuild against this contract rather than bolting checks onto it.
+
+**Grafts from arena candidate-2 (keep these behaviors).**
+- Stamp `GridAt = epoch + offset` right before a wave fires.
+- Admit with literal loopback host check only (no DNS in the safety gate).
+- Recovery arms at most one follower wave from Retry-After after the exhaust log seals.
+- Never retry HTTP; record transport errors as events.
