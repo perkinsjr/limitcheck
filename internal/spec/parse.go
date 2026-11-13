@@ -35,7 +35,7 @@ Flags
   --method METHOD    HTTP method (default GET)
   --body TEXT        request body
   --max-requests N   hard cap on planned requests (default 200)
-  --yes              allow a host that is not loopback
+  --yes              allow a host that is not local
   --dry-run          print the plan and send nothing
   --json             print the report as JSON
   --config PATH      YAML file. Flags that you set override the file
