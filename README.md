@@ -1,18 +1,62 @@
 # limitcheck
 
-You name the rate limit you expect. limitcheck sends the traffic that would expose a bad limiter, then prints pass, warn, fail, or inconclusive for each check.
+You tell it the rate limit you expect. It hits the API with the traffic that would break a bad limiter, then tells you pass, warn, fail, or inconclusive for each check.
 
-Exit codes: any fail → `1`; no fail but something inconclusive → `2`; pass, warn, or dry-run → `0`; did not start → `2`.
+Exit codes: any fail → `1`; nothing failed but something was inconclusive → `2`; pass, warn, or dry-run → `0`; the run never started → `2`.
 
-## Build
-
-```
-go build -o limitcheck ./cmd/limitcheck
-```
+## How to use
 
 Needs Go 1.22+.
 
-## Fastest path: prove the tool works
+```
+git clone https://github.com/perkinsjr/limitcheck.git
+cd limitcheck
+go build -o limitcheck ./cmd/limitcheck
+```
+
+Against a local server:
+
+```
+./limitcheck http://127.0.0.1:8080/v1/items \
+  --limit 5/1s \
+  --header 'Authorization: Bearer secret'
+```
+
+`--limit` looks like `100/60s` or `5/500ms`. The window must be at least 400ms.
+
+A host that is not `127.0.0.1`, `::1`, or `localhost` needs `--yes`, or the tool refuses and sends nothing:
+
+```
+./limitcheck http://203.0.113.5/items --limit 5/1s
+```
+
+```
+limitcheck: 203.0.113.5 is not a local address, so pass --yes to send traffic there
+```
+
+`--dry-run` prints the plan and exits `0` without dialing. Public URLs do not need `--yes` for a dry run.
+
+```
+./limitcheck --dry-run --limit 5/1s http://203.0.113.5/items
+```
+
+```
+dry run, 40 requests, nothing sent
+limit 5 per 1s
+headers        sample     7
+accuracy       steady     7
+boundary       pre        5
+boundary       post       5
+burst          burst      7
+recovery       exhaust    7
+recovery       follower   2
+```
+
+Save settings in `limitcheck.yaml` and run `./limitcheck --config limitcheck.yaml`. Flags you set on the command override the file. Pass `--json` for machine-readable output.
+
+## Examples
+
+Prove the built-in limiters first:
 
 ```
 ./limitcheck --self-test
@@ -31,9 +75,7 @@ rotate         ok  isolation fail
 self-test passed
 ```
 
-Exit `0` means every broken local limiter failed the check that matches its bug, and the good limiter (`token`) passed.
-
-## Check one broken limiter and read the report
+**Fail** — fixed window leaks across a clock edge:
 
 ```
 ./limitcheck demo --scenario fixed
@@ -41,9 +83,9 @@ Exit `0` means every broken local limiter failed the check that matches its bug,
 
 ```
 scenario fixed
-target http://127.0.0.1:43573/
+target http://127.0.0.1:35471/
 limit 5 per 500ms
-sent 40, allowed 31, rejected 9, errors 0, max drift 1ms
+sent 40, allowed 31, rejected 9, errors 0, max drift 2ms
 
 headers        pass          429 responses include Retry-After, a rate-limit header, and a JSON reset, and remaining does not go up
 accuracy       pass          steady run allowed 5 requests, limit is 5
@@ -58,9 +100,9 @@ timeline 4.58s
 1 check failed
 ```
 
-`boundary` failed: the server let through about twice the limit across a clock edge. Exit code is `1`.
+Exit code `1`. Boundary saw about twice the limit across the edge.
 
-A clean pass looks like this (`token` is a sliding window that holds):
+**Pass** — sliding window holds:
 
 ```
 ./limitcheck demo --scenario token
@@ -68,143 +110,108 @@ A clean pass looks like this (`token` is a sliding window that holds):
 
 ```
 scenario token
-target http://127.0.0.1:43809/
+target http://127.0.0.1:46347/
 limit 5 per 500ms
-sent 55, allowed 37, rejected 18, errors 0, max drift 1ms
+sent 55, allowed 37, rejected 18, errors 0, max drift 2ms
 
-headers        pass          …
+headers        pass          429 responses include Retry-After, a rate-limit header, and a JSON reset, and remaining does not go up
 accuracy       pass          steady run allowed 5 requests, limit is 5
 boundary       pass          second burst allowed 0 after the edge, limit is 5
 burst          pass          concurrent burst allowed 5 requests, limit is 5
 recovery       pass          the next success was at or after the advertised reset
 isolation      pass          the second identity was still allowed, and a fresh request id did not raise the limit
 
+timeline 6.666s
++x......++x......+x.......+#........#....+.......#+.......+#
++ allowed   x rejected   # both   . idle
+
 no check failed
 ```
 
-Other useful demos:
+Exit code `0`.
 
-| Command | What you should see |
-|---------|---------------------|
-| `demo --scenario race` | `burst fail` — concurrent burst allowed 7, limit is 5 |
-| `demo --scenario open` | `accuracy fail` — steady run allowed 7, limit is 5 |
-| `demo --scenario bad-headers` | `headers fail` — rejected with status 503, want 429 |
-| `demo --scenario early` | `recovery fail` — success before the advertised reset |
-
-`fixed-window` and `racy` are older names for `fixed` and `race`. `correct` is an older name for `token`.
-
-## Point it at your own server
-
-Localhost needs no extra flag:
-
-```
-./limitcheck http://127.0.0.1:8080/v1/items \
-  --limit 5/1s \
-  --header 'Authorization: Bearer secret'
-```
-
-`--limit` is `count/window`, for example `100/60s` or `5/500ms`. The window must be at least 400ms.
-
-Each check waits out one full window before measuring, so leftover traffic is not still counting. A 60s limit takes a few minutes. A limit of 100 per 60s plans hundreds of requests; the default cap is 200, so raise `--max-requests` if the plan is bigger than that.
-
-## Safety: remote hosts
-
-A real send to any host other than `127.0.0.1`, `::1`, or `localhost` is refused unless you pass `--yes`. The tool compares the host text and does not look up DNS.
-
-```
-./limitcheck http://203.0.113.5/items --limit 5/1s
-```
-
-```
-limitcheck: 203.0.113.5 is not a local address, so pass --yes to send traffic there
-```
-
-Exit `2`. Nothing was sent. Add `--yes` only when you mean to hit that host.
-
-## Preview without sending
-
-`--dry-run` prints the wave plan and exits `0`. It never dials, so a public URL does not need `--yes`.
-
-```
-./limitcheck --dry-run --limit 5/1s http://203.0.113.5/items
-```
-
-```
-dry run, 40 requests, nothing sent
-limit 5 per 1s
-headers        sample     7
-accuracy       steady     7
-boundary       pre        5
-boundary       post       5
-burst          burst      7
-recovery       exhaust    7
-recovery       follower   2
-```
+Serve a broken limiter yourself with `./limitcheck serve --addr 127.0.0.1:0 --limit 10/2s --algo fixed` (`token`, `fixed`, or `race`).
 
 ## What each check means
 
-| Check | One sentence |
-|-------|--------------|
+| Check | Meaning |
+|-------|---------|
 | **headers** | Rejections are 429s with Retry-After and a rate-limit header, remaining does not climb, and the body has a reset time. |
-| **accuracy** | A steady series is allowed about the count you named, not a lot more or less. |
-| **boundary** | A burst just before a clock edge plus a burst just after does not get ~2× the limit. |
+| **accuracy** | A steady series is allowed about the count you named. |
+| **boundary** | Bursts just before and just after a clock edge do not get ~2× the limit. |
 | **burst** | Overlapping requests do not sneak past the limit (inconclusive if the limit is 64 or higher). |
-| **recovery** | After a 429, the next success is at or after the reset time the server advertised, not earlier. |
-| **isolation** | Joins when you pass two `--identity` values or `--key-by`. One client filling the bucket must not throttle another; rotating `X-Limitcheck-Request` must not mint a new bucket. |
-| **multi_instance** | Joins when you pass two `--origin` values and `--sharing`. Shared means one counter; without sharing, each origin keeping its own full limit fails this check. |
+| **recovery** | After a 429, the next success is at or after the reset time the server advertised. |
+| **isolation** | Joins when you pass two `--identity` values or `--key-by`. One client filling the bucket must not throttle another. |
+| **multi_instance** | Joins when you pass two `--origin` values and `--sharing`. The origins should share one counter. |
 
-Default run order: headers, accuracy, boundary, burst, recovery. Isolation and multi_instance join only when the flags above are set (or you name them with `--check`).
+Default order: headers, accuracy, boundary, burst, recovery. Isolation and multi_instance join only when those flags are set (or you name them with `--check`).
+
+If headers fails and Unkey fronts the API, compare with Unkey's [rate limited](https://www.unkey.com/docs/errors/frontline/client/rate_limited) 429 shape — this check wants a reset time in the JSON body too.
 
 ## How to read a report
 
-1. First lines: target, stated limit, how many were sent / allowed / rejected.
-2. One line per check: name, status, short reason.
-3. Timeline: `+` allowed, `x` rejected, `#` both in that slice, `.` idle.
-4. Last line: how many checks failed.
+1. Target URL and the limit you stated.
+2. Counts: sent, allowed, rejected, errors, max drift.
+3. One line per check: name, status, short reason.
+4. Timeline: `+` allowed, `x` rejected, `#` both in that slice, `.` idle.
+5. Last line: how many checks failed.
 
-Pass `--json` for machine-readable output. In CI, exit `1` fails the job.
+In CI, exit `1` fails the job. Exit `2` means the run was inconclusive or never started — treat that as a problem too if you want a hard gate.
 
-If **headers** fails and an Unkey gateway fronts the API, compare with Unkey's [rate limited](https://www.unkey.com/docs/errors/frontline/client/rate_limited) 429: it sends `Retry-After` and `X-RateLimit-*`, and the JSON body needs a reset time for this check to pass.
+## How to use in CI
 
-## Config file
-
-`limitcheck.yaml`:
+This workflow builds the binary, proves the tool against its own broken servers, then fails the job if a real target fails a check. Set `LIMITCHECK_URL`, `LIMITCHECK_LIMIT`, and optional auth in repository secrets/vars. Drop the real-target step until you have a loopback or staging host you are willing to hit with `--yes`.
 
 ```yaml
-url: http://127.0.0.1:8080/v1/items
-method: POST
-body: '{"n":1}'
-headers:
-  Authorization: Bearer secret
-limit: 10/1s
-identities:
-  - name: a
-    headers:
-      X-Identity: a
-  - name: b
-    headers:
-      X-Identity: b
-key_by:
-  - X-Identity
-origins:
-  - http://127.0.0.1:8081/v1/items
-sharing: true
-checks:
-  - accuracy
-  - boundary
-max_requests: 200
+# .github/workflows/limitcheck.yml
+name: limitcheck
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rate-limit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build
+        run: go build -o limitcheck ./cmd/limitcheck
+
+      - name: Self-test
+        run: ./limitcheck --self-test
+
+      - name: Check staging limit
+        env:
+          URL: ${{ vars.LIMITCHECK_URL }}
+          LIMIT: ${{ vars.LIMITCHECK_LIMIT }}
+          TOKEN: ${{ secrets.LIMITCHECK_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${URL:-}" ] || [ -z "${LIMIT:-}" ]; then
+            echo "Set LIMITCHECK_URL and LIMITCHECK_LIMIT to run against a real host."
+            exit 0
+          fi
+          ./limitcheck "$URL" \
+            --limit "$LIMIT" \
+            --header "Authorization: Bearer $TOKEN" \
+            --yes \
+            --max-requests 500
 ```
 
-```
-./limitcheck --config limitcheck.yaml --json
-```
+A one-off script does the same thing locally:
 
-A flag you set on the command overrides that field from the file. Separate headers inside one `--identity` with `;` (for example `name=a; X-Identity: a`).
-
-## Serve a broken limiter yourself
-
-```
-./limitcheck serve --addr 127.0.0.1:0 --limit 10/2s --algo fixed
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+go build -o limitcheck ./cmd/limitcheck
+./limitcheck --self-test
+./limitcheck "$LIMITCHECK_URL" --limit "$LIMITCHECK_LIMIT" --yes
 ```
 
-`--algo` is `token` (holds), `fixed` (leaks across the clock edge), or `race` (lets overlapping requests through). The process prints the listen URL, then waits until you interrupt it.
+Because a failed check exits `1`, `set -e` (and GitHub Actions) stop the job there.
