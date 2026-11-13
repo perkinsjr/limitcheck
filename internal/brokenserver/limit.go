@@ -7,7 +7,7 @@ import (
 
 const raceGap = 30 * time.Millisecond
 
-const earlyGrant = 20 * time.Millisecond
+const earlyGrantAfterBurst = 20 * time.Millisecond
 
 type limiter interface {
 	allow(key string, now time.Time) (allowed bool, remaining int, reset time.Time)
@@ -97,6 +97,10 @@ func (r *raceLim) allow(key string, now time.Time) (bool, int, time.Time) {
 	}
 	seen := r.count[key]
 	r.mu.Unlock()
+	return r.lostUpdateAfterGap(key, now, seen)
+}
+
+func (r *raceLim) lostUpdateAfterGap(key string, now time.Time, seenAtCheck int) (bool, int, time.Time) {
 	time.Sleep(raceGap)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -105,7 +109,7 @@ func (r *raceLim) allow(key string, now time.Time) (bool, int, time.Time) {
 		r.count[key] = 0
 	}
 	reset := r.start[key].Add(r.window)
-	if seen >= r.n {
+	if seenAtCheck >= r.n {
 		return false, 0, reset
 	}
 	r.count[key]++
@@ -135,7 +139,7 @@ func (e *early) allow(key string, now time.Time) (bool, int, time.Time) {
 		e.denied[key] = now
 		return false, 0, reset
 	}
-	if !e.gifted[key] && now.Sub(t) >= earlyGrant {
+	if !e.gifted[key] && now.Sub(t) >= earlyGrantAfterBurst {
 		e.gifted[key] = true
 		return true, 0, reset
 	}

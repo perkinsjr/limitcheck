@@ -149,7 +149,11 @@ func (h handler) key(r *http.Request) string {
 		id = "anon"
 	}
 	if h.algo == "rotate" {
-		return id + "\n" + r.Header.Get("X-Limitcheck-Request")
+		return foldRequestIDIntoKey(id, r)
 	}
 	return id
+}
+
+func foldRequestIDIntoKey(id string, r *http.Request) string {
+	return id + "\n" + r.Header.Get("X-Limitcheck-Request")
 }

@@ -85,7 +85,11 @@ func Write(w http.ResponseWriter, shape Shape, d Decision) {
 	w.Header().Set("Retry-After", strconv.Itoa(sec))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests)
-	_, _ = fmt.Fprintf(w, `{"reset":%d}`, d.Reset.UnixMilli())
+	_, _ = w.Write(resetBodyUnixMilli(d.Reset))
+}
+
+func resetBodyUnixMilli(reset time.Time) []byte {
+	return []byte(fmt.Sprintf(`{"reset":%d}`, reset.UnixMilli()))
 }
 
 func remaining(d Decision) int {
