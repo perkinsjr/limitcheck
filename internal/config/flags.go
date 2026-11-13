@@ -1,19 +1,13 @@
-package spec
+package config
 
 import (
-	"errors"
 	"flag"
-	"fmt"
 	"io"
-	"sort"
 	"strings"
 )
 
-// errFlagHelp is the help signal from the standard flag package, renamed so callers
-// can use errors.Is without importing flag.
 var errFlagHelp = flag.ErrHelp
 
-// flagSet is a small wrapper so Visit can see which names the user typed.
 type flagSet struct {
 	fs *flag.FlagSet
 }
@@ -34,6 +28,9 @@ var valueFlags = map[string]bool{
 	"origin":       true,
 	"check":        true,
 	"scenario":     true,
+	"key-by":       true,
+	"addr":         true,
+	"algo":         true,
 }
 
 // reorderArgs moves positionals to the end so a url can sit before flags.
@@ -98,33 +95,4 @@ func (s *flagSet) Visit(fn func(*flagSetter)) {
 	s.fs.Visit(func(f *flag.Flag) {
 		fn(&flagSetter{name: f.Name})
 	})
-}
-
-func sortStrings(in []string) {
-	sort.Strings(in)
-}
-
-// HasCheck reports whether the campaign selected kind.
-func HasCheck(c Campaign, kind CheckKind) bool {
-	for _, k := range c.Checks {
-		if k == kind {
-			return true
-		}
-	}
-	return false
-}
-
-// RequestURL builds the URL for one origin, keeping the target path and query.
-func RequestURL(c Campaign, origin int) (string, error) {
-	if origin < 0 || origin >= len(c.Origins) {
-		return "", fmt.Errorf("origin %d is out of range", origin)
-	}
-	if c.Target.URL == nil {
-		return "", errors.New("target url is missing")
-	}
-	u := *c.Target.URL
-	o := c.Origins[origin]
-	u.Scheme = o.Scheme
-	u.Host = o.Host
-	return u.String(), nil
 }

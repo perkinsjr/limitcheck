@@ -7,13 +7,12 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"time"
 
+	"github.com/perkinsjr/limitcheck/internal/brokenserver"
+	"github.com/perkinsjr/limitcheck/internal/campaign"
 	"github.com/perkinsjr/limitcheck/internal/check"
-	"github.com/perkinsjr/limitcheck/internal/plan"
-	"github.com/perkinsjr/limitcheck/internal/report"
-	"github.com/perkinsjr/limitcheck/internal/safety"
-	"github.com/perkinsjr/limitcheck/internal/schedule"
+	"github.com/perkinsjr/limitcheck/internal/config"
+	"github.com/perkinsjr/limitcheck/internal/render"
 	"github.com/perkinsjr/limitcheck/internal/spec"
 )
 
@@ -22,61 +21,65 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	cmd, err := spec.Parse(args)
+	cmd, err := config.Parse(args)
+	if errors.Is(err, config.ErrHelp) || (err == nil && cmd.Action == spec.ActionHelp) {
+		fmt.Fprint(stdout, config.Usage())
+		return 0
+	}
 	if err != nil {
-		if errors.Is(err, spec.ErrHelp) {
-			fmt.Fprint(stdout, spec.Usage())
-			return 0
-		}
 		fmt.Fprintf(stderr, "limitcheck: %s\n", err)
 		return 2
 	}
 	switch cmd.Action {
 	case spec.ActionSelfTest:
-		return selftest(cmd.Campaign.JSON, stdout, stderr)
+		return selftest(cmd, stdout, stderr)
 	case spec.ActionDemo:
-		return demo(cmd.Scenario, cmd.Campaign.JSON, stdout, stderr)
+		return demo(cmd, stdout, stderr)
+	case spec.ActionServe:
+		return serve(cmd, stdout, stderr)
 	default:
-		return execute(cmd.Campaign, stdout, stderr)
+		return execute(context.Background(), cmd, stdout, stderr)
 	}
 }
 
-func execute(c spec.Campaign, stdout, stderr io.Writer) int {
-	p, err := plan.Build(c, time.Now())
+func execute(ctx context.Context, cmd spec.Command, stdout, stderr io.Writer) int {
+	checks, err := check.Selected(cmd.Input)
 	if err != nil {
 		fmt.Fprintf(stderr, "limitcheck: %s\n", err)
 		return 2
 	}
-	if err := safety.Gate(c, p); err != nil {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+	report, err := campaign.Run(ctx, cmd.Input, checks)
+	if err != nil {
 		fmt.Fprintf(stderr, "limitcheck: %s\n", err)
 		return 2
 	}
-	if c.DryRun {
-		if c.JSON {
-			if err := report.WriteDryRunJSON(stdout, c, p); err != nil {
-				fmt.Fprintf(stderr, "limitcheck: %s\n", err)
-				return 2
-			}
-			return 0
-		}
-		report.WriteDryRun(stdout, c, p)
-		return 0
+	if err := writeReport(stdout, cmd.Input.JSON, report); err != nil {
+		fmt.Fprintf(stderr, "limitcheck: %s\n", err)
+		return 2
 	}
+	return report.ExitCode()
+}
+
+func writeReport(w io.Writer, asJSON bool, report render.Report) error {
+	if asJSON {
+		return render.WriteJSON(w, report)
+	}
+	render.WriteText(w, report)
+	return nil
+}
+
+func serve(cmd spec.Command, stdout, stderr io.Writer) int {
+	srv, err := brokenserver.Listen(cmd.Addr, cmd.Input.Policy.Rate, cmd.Algo)
+	if err != nil {
+		fmt.Fprintf(stderr, "limitcheck: %s\n", err)
+		return 2
+	}
+	defer srv.Close()
+	fmt.Fprintf(stdout, "serving %s %s\n", cmd.Algo, srv.URL())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	log, err := schedule.Execute(ctx, c, p)
-	if err != nil {
-		fmt.Fprintf(stderr, "limitcheck: %s\n", err)
-		return 2
-	}
-	verdicts := check.Run(c, log)
-	if c.JSON {
-		if err := report.WriteJSON(stdout, c, log, verdicts); err != nil {
-			fmt.Fprintf(stderr, "limitcheck: %s\n", err)
-			return 2
-		}
-	} else {
-		report.WriteText(stdout, c, log, verdicts)
-	}
-	return report.ExitCode(verdicts)
+	<-ctx.Done()
+	return 0
 }
