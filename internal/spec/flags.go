@@ -104,11 +104,6 @@ func sortStrings(in []string) {
 	sort.Strings(in)
 }
 
-// FormatLimit renders a limit the way ParseLimit accepts it.
-func FormatLimit(l Limit) string {
-	return fmt.Sprintf("%d/%s", l.Count, l.Window)
-}
-
 // HasCheck reports whether the campaign selected kind.
 func HasCheck(c Campaign, kind CheckKind) bool {
 	for _, k := range c.Checks {
@@ -132,13 +127,4 @@ func RequestURL(c Campaign, origin int) (string, error) {
 	u.Scheme = o.Scheme
 	u.Host = o.Host
 	return u.String(), nil
-}
-
-// CheckNames returns the selected checks in order.
-func CheckNames(c Campaign) string {
-	parts := make([]string, len(c.Checks))
-	for i, k := range c.Checks {
-		parts[i] = string(k)
-	}
-	return strings.Join(parts, ", ")
 }
